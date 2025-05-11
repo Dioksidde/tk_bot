@@ -19,6 +19,14 @@ class CategoryModel:
 
 
 @dataclass
+class QuestionModel:
+    id: str
+    text: str
+    subcategory_id: str
+    category_id: str
+
+
+@dataclass
 class Messages:
     # Welcome message shown on /start
     WELCOME_MESSAGE: str = (
@@ -70,6 +78,12 @@ class Messages:
 
     # Conversation end message
     CONVERSATION_END_MESSAGE: str = "Беседа завершена. Чтобы начать заново, используйте /start"
+    
+    # Game question display message
+    QUESTION_MESSAGE: str = "Вопрос {current_num} из {total}:\n\nТема: *{subcategory_name}* \n\n{question_text}"
+    
+    # Game completed message
+    GAME_COMPLETED_MESSAGE: str = "Вы прошли все вопросы! Надеемся, вы узнали друг друга лучше."
 
 
 @dataclass
@@ -79,6 +93,9 @@ class ButtonLabels:
     BACK_TO_CATEGORIES_BUTTON: str = "Назад к категориям"
     VIEW_SELECTIONS_BUTTON: str = "Посмотреть выбранные темы"
     BACK_TO_SUBCATEGORIES_BUTTON: str = "Назад к выбору тем"
+    START_GAME_BUTTON: str = "Приступить к игре"
+    NEXT_QUESTION_BUTTON: str = "Следующий вопрос"
+    PREVIOUS_QUESTION_BUTTON: str = "Предыдущий вопрос"
 
 
 @dataclass
@@ -90,6 +107,9 @@ class CallbackData:
     BACK_TO_CATEGORIES: str = "back_to_categories"
     VIEW_SELECTIONS: str = "view_selections"
     BACK_TO_SUBCATEGORIES: str = "back_to_subcategories"
+    START_GAME: str = "start_game"
+    NEXT_QUESTION: str = "next_question"
+    PREVIOUS_QUESTION: str = "previous_question"
 
 
 @dataclass

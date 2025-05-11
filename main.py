@@ -1,5 +1,6 @@
 import os
 import logging
+import random
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -11,6 +12,7 @@ from telegram.ext import (
 )
 
 from models import Messages, ButtonLabels, CallbackData, AppConfig
+from questions import get_questions_for_subcategories
 
 # Load environment variables
 load_dotenv()
@@ -23,7 +25,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Define conversation states
-START, SHOW_RULES, CHOOSE_CATEGORY, CHOOSE_SUBCATEGORY, VIEW_SUBCATEGORIES = range(5)
+START, SHOW_RULES, CHOOSE_CATEGORY, CHOOSE_SUBCATEGORY, VIEW_SUBCATEGORIES, PLAY_GAME = range(6)
 
 
 class ToKnowBot:
@@ -66,11 +68,29 @@ class ToKnowBot:
                         self.choose_category,
                         pattern=f"^{self.callbacks.BACK_TO_CATEGORIES}$"
                     ),
+                    CallbackQueryHandler(
+                        self.start_game,
+                        pattern=f"^{self.callbacks.START_GAME}$"
+                    ),
                 ],
                 VIEW_SUBCATEGORIES: [
                     CallbackQueryHandler(
                         self.show_subcategories,
                         pattern=f"^{self.callbacks.BACK_TO_SUBCATEGORIES}$"
+                    ),
+                    CallbackQueryHandler(
+                        self.choose_category,
+                        pattern=f"^{self.callbacks.BACK_TO_CATEGORIES}$"
+                    ),
+                ],
+                PLAY_GAME: [
+                    CallbackQueryHandler(
+                        self.next_question,
+                        pattern=f"^{self.callbacks.NEXT_QUESTION}$"
+                    ),
+                    CallbackQueryHandler(
+                        self.previous_question,
+                        pattern=f"^{self.callbacks.PREVIOUS_QUESTION}$"
                     ),
                     CallbackQueryHandler(
                         self.choose_category,
@@ -188,12 +208,12 @@ class ToKnowBot:
                 # Add description to message
                 message_parts.append(f"\n{subcategory.emoji} *{subcategory.name}*\n{subcategory.description}")
         
-        # Add "View selections" button if there are any subcategories selected
+        # Add "Start Game" button if there are any subcategories selected
         if context.user_data.get("selected_subcategories", []):
             keyboard.append([
                 InlineKeyboardButton(
-                    self.buttons.VIEW_SELECTIONS_BUTTON,
-                    callback_data=self.callbacks.VIEW_SELECTIONS
+                    self.buttons.START_GAME_BUTTON,
+                    callback_data=self.callbacks.START_GAME
                 )
             ])
         
@@ -314,6 +334,146 @@ class ToKnowBot:
         )
         
         return VIEW_SUBCATEGORIES
+
+    async def start_game(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """Start the game with questions from selected subcategories."""
+        query = update.callback_query
+        await query.answer()
+        
+        selected_category_id = context.user_data.get("selected_category")
+        selected_subcategories = context.user_data.get("selected_subcategories", [])
+        
+        if not selected_subcategories:
+            await query.answer("Пожалуйста, выберите хотя бы одну тему", show_alert=True)
+            return CHOOSE_SUBCATEGORY
+        
+        # Get questions for selected subcategories
+        questions = get_questions_for_subcategories(selected_category_id, selected_subcategories)
+        
+        if not questions:
+            await query.answer("Нет вопросов для выбранных тем", show_alert=True)
+            return CHOOSE_SUBCATEGORY
+        
+        # Shuffle questions for a random order
+        random.shuffle(questions)
+        
+        # Store questions and current question index in user data
+        context.user_data["questions"] = questions
+        context.user_data["current_question_index"] = 0
+        
+        # Show the first question
+        return await self.show_question(update, context)
+    
+    async def show_question(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """Display the current question to the user."""
+        query = update.callback_query
+        
+        questions = context.user_data.get("questions", [])
+        current_index = context.user_data.get("current_question_index", 0)
+        
+        if not questions:
+            await query.edit_message_text("Произошла ошибка. Пожалуйста, используйте /start для начала заново.")
+            return ConversationHandler.END
+        
+        # Get the current question
+        current_question = questions[current_index]
+        
+        # Get the subcategory information
+        selected_category_id = context.user_data.get("selected_category")
+        category = self.config.CATEGORIES.get(selected_category_id)
+        subcategory = category.subcategories.get(current_question.subcategory_id)
+        subcategory_name = subcategory.name + " " + subcategory.emoji if subcategory else "Неизвестная тема"
+        
+        # Create keyboard with navigation buttons
+        keyboard = []
+        
+        # Add Previous button if not at the first question
+        if current_index > 0:
+            keyboard.append([
+                InlineKeyboardButton(
+                    self.buttons.PREVIOUS_QUESTION_BUTTON,
+                    callback_data=self.callbacks.PREVIOUS_QUESTION
+                )
+            ])
+        
+        # Add Next button if not at the last question
+        if current_index < len(questions) - 1:
+            next_button = InlineKeyboardButton(
+                self.buttons.NEXT_QUESTION_BUTTON,
+                callback_data=self.callbacks.NEXT_QUESTION
+            )
+            if current_index > 0:
+                # If we have both Previous and Next buttons, put them in one row
+                keyboard[-1].append(next_button)
+            else:
+                keyboard.append([next_button])
+        
+        # Add Back to categories button
+        keyboard.append([
+            InlineKeyboardButton(
+                self.buttons.BACK_TO_CATEGORIES_BUTTON,
+                callback_data=self.callbacks.BACK_TO_CATEGORIES
+            )
+        ])
+        
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        # Format the question message
+        message_text = self.messages.QUESTION_MESSAGE.format(
+            current_num=current_index + 1,
+            total=len(questions),
+            subcategory_name=subcategory_name,
+            question_text=current_question.text
+        )
+        
+        # Delete previous message and send the new one with question
+        await query.delete_message()
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=message_text,
+            reply_markup=reply_markup,
+            parse_mode="Markdown"
+        )
+        
+        return PLAY_GAME
+    
+    async def next_question(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """Show the next question."""
+        query = update.callback_query
+        await query.answer()
+        
+        questions = context.user_data.get("questions", [])
+        current_index = context.user_data.get("current_question_index", 0)
+        
+        if current_index < len(questions) - 1:
+            context.user_data["current_question_index"] = current_index + 1
+            return await self.show_question(update, context)
+        else:
+            # If we're at the last question, show completion message
+            await query.edit_message_text(
+                text=self.messages.GAME_COMPLETED_MESSAGE,
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton(
+                        self.buttons.BACK_TO_CATEGORIES_BUTTON,
+                        callback_data=self.callbacks.BACK_TO_CATEGORIES
+                    )
+                ]])
+            )
+            return PLAY_GAME
+    
+    async def previous_question(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """Show the previous question."""
+        query = update.callback_query
+        await query.answer()
+        
+        current_index = context.user_data.get("current_question_index", 0)
+        
+        if current_index > 0:
+            context.user_data["current_question_index"] = current_index - 1
+            return await self.show_question(update, context)
+        else:
+            # If we're at the first question, stay there
+            return await self.show_question(update, context)
 
     async def category_selected(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         """Handle category selection."""
