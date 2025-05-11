@@ -153,7 +153,7 @@ class ToKnowBot:
 
         # Extract selected category from callback data
         if query.data.startswith(self.callbacks.CATEGORY_PREFIX):
-            selected_category_id = query.data.split("_")[1]
+            selected_category_id = query.data[len(self.callbacks.CATEGORY_PREFIX):]
             # Reset selected subcategories when choosing a new category
             context.user_data["selected_subcategories"] = []
         else:
@@ -165,6 +165,9 @@ class ToKnowBot:
         # Store the selected category in user data
         context.user_data["selected_category"] = selected_category_id
 
+        # Build message with subcategories and descriptions
+        message_parts = [self.messages.SUBCATEGORY_SELECTION_MESSAGE.format(category_name=category.name)]
+        
         # Create buttons for each subcategory
         keyboard = []
         if category and category.subcategories:
@@ -181,6 +184,9 @@ class ToKnowBot:
                         callback_data=f"{self.callbacks.SUBCATEGORY_PREFIX}{subcategory_id}"
                     )
                 ])
+                
+                # Add description to message
+                message_parts.append(f"\n{subcategory.emoji} *{subcategory.name}*\n{subcategory.description}")
         
         # Add "View selections" button if there are any subcategories selected
         if context.user_data.get("selected_subcategories", []):
@@ -200,13 +206,15 @@ class ToKnowBot:
         ])
         
         reply_markup = InlineKeyboardMarkup(keyboard)
+        message_text = "\n".join(message_parts)
 
         # Delete previous message and send a new one with subcategories
         await query.delete_message()
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text=self.messages.SUBCATEGORY_SELECTION_MESSAGE.format(category_name=category.name),
-            reply_markup=reply_markup
+            text=message_text,
+            reply_markup=reply_markup,
+            parse_mode="Markdown"
         )
 
         return CHOOSE_SUBCATEGORY
@@ -216,8 +224,8 @@ class ToKnowBot:
         query = update.callback_query
         await query.answer()
 
-        # Extract selected subcategory from callback data
-        selected_subcategory_id = query.data.split("_")[1]
+        # Extract selected subcategory from callback data - fixed to handle underscores in IDs
+        selected_subcategory_id = query.data[len(self.callbacks.SUBCATEGORY_PREFIX):]
         selected_category_id = context.user_data.get("selected_category")
         
         if not selected_category_id:
@@ -313,7 +321,7 @@ class ToKnowBot:
         await query.answer()
 
         # Extract selected category from callback data
-        selected_category_id = query.data.split("_")[1]
+        selected_category_id = query.data[len(self.callbacks.CATEGORY_PREFIX):]
         category = self.config.CATEGORIES.get(selected_category_id)
 
         # Delete previous message and send final message
