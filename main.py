@@ -2,7 +2,15 @@ import os
 import logging
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, ConversationHandler
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    CallbackQueryHandler,
+    ContextTypes,
+    ConversationHandler
+)
+
+from models import Messages, ButtonLabels, CallbackData, AppConfig
 
 # Load environment variables
 load_dotenv()
@@ -17,140 +25,141 @@ logger = logging.getLogger(__name__)
 # Define conversation states
 START, SHOW_RULES, CHOOSE_CATEGORY = range(3)
 
-# Category buttons
-CATEGORIES = {
-    "strangers": "Незнакомцы",
-    "acquaintances": "Приятели",
-    "friends": "Друзья",
-    "lovers": "Влюбленные"
-}
+
+class ToKnowBot:
+    def __init__(self, token):
+        """Initialize the bot with token and configurations"""
+        self.token = token
+        self.messages = Messages()
+        self.buttons = ButtonLabels()
+        self.callbacks = CallbackData()
+        self.config = AppConfig()
+
+        # Setup application
+        self.application = Application.builder().token(self.token).build()
+        self._setup_handlers()
+
+    def _setup_handlers(self):
+        """Set up all necessary conversation handlers"""
+        # Set up conversation handler
+        conv_handler = ConversationHandler(
+            entry_points=[CommandHandler("start", self.start)],
+            states={
+                START: [CallbackQueryHandler(self.show_rules, pattern=f"^{self.callbacks.START}$")],
+                SHOW_RULES: [CallbackQueryHandler(self.choose_category, pattern=f"^{self.callbacks.CHOOSE_CATEGORY}$")],
+                CHOOSE_CATEGORY: [
+                    CallbackQueryHandler(
+                        self.category_selected,
+                        pattern=f"^{self.callbacks.CATEGORY_PREFIX}"
+                    )
+                ],
+            },
+            fallbacks=[CommandHandler("cancel", self.cancel)],
+        )
+
+        self.application.add_handler(conv_handler)
+
+    async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """Send welcome message and prompt user to continue."""
+        keyboard = [
+            [InlineKeyboardButton(self.buttons.START_BUTTON, callback_data=self.callbacks.START)]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await update.message.reply_text(
+            self.messages.WELCOME_MESSAGE,
+            reply_markup=reply_markup
+        )
+
+        return START
+
+    async def show_rules(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """Show the rules and prompt user to continue."""
+        query = update.callback_query
+        await query.answer()
+
+        keyboard = [
+            [InlineKeyboardButton(self.buttons.CHOOSE_CATEGORY_BUTTON, callback_data=self.callbacks.CHOOSE_CATEGORY)]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        # Delete previous message and send a new one instead of editing
+        await query.delete_message()
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=self.messages.RULES_MESSAGE,
+            reply_markup=reply_markup
+        )
+
+        return SHOW_RULES
+
+    async def choose_category(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """Show category selection options."""
+        query = update.callback_query
+        await query.answer()
+
+        # Create buttons for each category
+        keyboard = []
+        for category_id, category in self.config.CATEGORIES.items():
+            keyboard.append(
+                [InlineKeyboardButton(category.name, callback_data=f"{self.callbacks.CATEGORY_PREFIX}{category_id}")])
+
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        # Delete previous message and send a new one
+        await query.delete_message()
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=self.messages.CATEGORY_SELECTION_MESSAGE,
+            reply_markup=reply_markup
+        )
+
+        return CHOOSE_CATEGORY
+
+    async def category_selected(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """Handle category selection."""
+        query = update.callback_query
+        await query.answer()
+
+        # Extract selected category from callback data
+        selected_category_id = query.data.split("_")[1]
+        category = self.config.CATEGORIES.get(selected_category_id)
+
+        # Delete previous message and send final message
+        await query.delete_message()
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=self.messages.CATEGORY_SELECTED_MESSAGE.format(category_name=category.name)
+        )
+
+        # Store the selected category in user data
+        context.user_data["selected_category"] = selected_category_id
+
+        return ConversationHandler.END
 
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Send welcome message and prompt user to continue."""
-    keyboard = [
-        [InlineKeyboardButton("Начать", callback_data="start")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
+    async def cancel(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """Cancel conversation."""
+        # Handle both direct command and callback query
+        if update.callback_query:
+            query = update.callback_query
+            await query.answer()
+            await query.edit_message_text(self.messages.CONVERSATION_END_MESSAGE)
+        else:
+            await update.message.reply_text(self.messages.CONVERSATION_END_MESSAGE)
 
-    await update.message.reply_text(
-        "Привет!\n\n"
-        "Перед тобой игра, которая помогает людям по-настоящему узнать друг друга. "
-        "Не поверхностно – а глубоко, честно, по-настоящему.\n\n"
-        "Она подойдёт тем, кто хо-чет стать ближе, почувствовать рядом живого человека, "
-        "услышать его – и быть услышанным.\n\n"
-        "Это не совсем игра в привычном смысле. Это помощник. Повод для разговора, "
-        "который, возможно, откроет в тебе или в другом то, на что раньше не хватало слов, "
-        "времени или смелости.\n\n"
-        "С ней ты можешь заново взглянуть на тех, кого знаешь сто лет – или мягко начать "
-        "разговор с тем, кто был для тебя совсем незнаком.",
-        reply_markup=reply_markup
-    )
+        return ConversationHandler.END
 
-    return START
+    def run(self):
+        """Start the bot."""
+        logger.info("Starting bot")
+        self.application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
-async def show_rules(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Show the rules and prompt user to continue."""
-    query = update.callback_query
-    await query.answer()
-
-    keyboard = [
-        [InlineKeyboardButton("Выбрать категорию", callback_data="choose_category")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    await query.edit_message_text(
-        "Отвечай так, как тебе комфортно. Если вопрос покажется странным, скучным или "
-        "не в тему – просто пропусти его. Здесь никто не торопит и не оценивает.\n\n"
-        "Игра создана для живого общения. В неё можно играть и онлайн, но если есть "
-        "возможность – лучше встретиться вживую. Так тепло чувствуется ближе.\n\n"
-        "Здесь нет победителей. Но если после разговора вы почувствуете, что стали "
-        "ближе – значит, это уже победа.\n\n"
-        "И главное – будь честен. С собой и с другим. Это не всегда просто, но именно "
-        "в этом рождаются настоящие разговоры.",
-        reply_markup=reply_markup
-    )
-
-    return SHOW_RULES
-
-
-async def choose_category(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Show category selection options."""
-    query = update.callback_query
-    await query.answer()
-
-    # Create buttons for each category
-    keyboard = []
-    for category_id, category_name in CATEGORIES.items():
-        keyboard.append([InlineKeyboardButton(category_name, callback_data=f"category_{category_id}")])
-
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    await query.edit_message_text(
-        "Выберите категорию:",
-        reply_markup=reply_markup
-    )
-
-    return CHOOSE_CATEGORY
-
-
-async def category_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handle category selection."""
-    query = update.callback_query
-    await query.answer()
-
-    # Extract selected category from callback data
-    selected_category = query.data.split("_")[1]
-    category_name = CATEGORIES.get(selected_category, "Unknown")
-
-    await query.edit_message_text(
-        f"Вы выбрали категорию: {category_name}\n\n"
-        "Здесь будут появляться вопросы для обсуждения.\n"
-        "(Функционал вопросов будет добавлен в следующем обновлении)"
-    )
-
-    # Store the selected category in user data
-    context.user_data["selected_category"] = selected_category
-
-    return ConversationHandler.END
-
-
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Cancel conversation."""
-    query = update.callback_query
-    await query.answer()
-
-    await query.edit_message_text("Беседа завершена. Чтобы начать заново, используйте /start")
-
-    return ConversationHandler.END
-
-
-def main() -> None:
-    """Start the bot."""
-    # Create the Application
-    application = Application.builder().token(TELEGRAM_TOKEN).build()
-
-    # Set up conversation handler
-    conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("start", start)],
-        states={
-            START: [CallbackQueryHandler(show_rules, pattern="^start$")],
-            SHOW_RULES: [CallbackQueryHandler(choose_category, pattern="^choose_category$")],
-            CHOOSE_CATEGORY: [
-                CallbackQueryHandler(
-                    category_selected,
-                    pattern="^category_"
-                )
-            ],
-        },
-        fallbacks=[CommandHandler("cancel", cancel)],
-    )
-
-    application.add_handler(conv_handler)
-
-    # Start the Bot
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+def main():
+    """Main function to run the bot"""
+    bot = ToKnowBot(TELEGRAM_TOKEN)
+    bot.run()
 
 
 if __name__ == "__main__":
