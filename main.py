@@ -89,11 +89,7 @@ class ToKnowBot:
                         pattern=f"^{self.callbacks.NEXT_QUESTION}$"
                     ),
                     CallbackQueryHandler(
-                        self.previous_question,
-                        pattern=f"^{self.callbacks.PREVIOUS_QUESTION}$"
-                    ),
-                    CallbackQueryHandler(
-                        self.choose_category,
+                        self.show_subcategories,
                         pattern=f"^{self.callbacks.BACK_TO_CATEGORIES}$"
                     ),
                 ],
@@ -387,28 +383,16 @@ class ToKnowBot:
         # Create keyboard with navigation buttons
         keyboard = []
         
-        # Add Previous button if not at the first question
-        if current_index > 0:
+        # Add Next button if not at the last question
+        if current_index < len(questions) - 1:
             keyboard.append([
                 InlineKeyboardButton(
-                    self.buttons.PREVIOUS_QUESTION_BUTTON,
-                    callback_data=self.callbacks.PREVIOUS_QUESTION
+                    self.buttons.NEXT_QUESTION_BUTTON,
+                    callback_data=self.callbacks.NEXT_QUESTION
                 )
             ])
         
-        # Add Next button if not at the last question
-        if current_index < len(questions) - 1:
-            next_button = InlineKeyboardButton(
-                self.buttons.NEXT_QUESTION_BUTTON,
-                callback_data=self.callbacks.NEXT_QUESTION
-            )
-            if current_index > 0:
-                # If we have both Previous and Next buttons, put them in one row
-                keyboard[-1].append(next_button)
-            else:
-                keyboard.append([next_button])
-        
-        # Add Back to categories button
+        # Add Back to subcategories button
         keyboard.append([
             InlineKeyboardButton(
                 self.buttons.BACK_TO_CATEGORIES_BUTTON,
@@ -426,8 +410,7 @@ class ToKnowBot:
             question_text=current_question.text
         )
         
-        # Delete previous message and send the new one with question
-        await query.delete_message()
+        # Send the new question without deleting the previous one
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=message_text,
@@ -450,30 +433,20 @@ class ToKnowBot:
             return await self.show_question(update, context)
         else:
             # If we're at the last question, show completion message
-            await query.edit_message_text(
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
                 text=self.messages.GAME_COMPLETED_MESSAGE,
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton(
-                        self.buttons.BACK_TO_CATEGORIES_BUTTON,
-                        callback_data=self.callbacks.BACK_TO_CATEGORIES
-                    )
-                ]])
+                reply_markup=InlineKeyboardMarkup([
+                    [
+                        InlineKeyboardButton(
+                            self.buttons.BACK_TO_CATEGORIES_BUTTON,
+                            callback_data=self.callbacks.BACK_TO_CATEGORIES
+                        )
+                    ]
+                ])
             )
             return PLAY_GAME
     
-    async def previous_question(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-        """Show the previous question."""
-        query = update.callback_query
-        await query.answer()
-        
-        current_index = context.user_data.get("current_question_index", 0)
-        
-        if current_index > 0:
-            context.user_data["current_question_index"] = current_index - 1
-            return await self.show_question(update, context)
-        else:
-            # If we're at the first question, stay there
-            return await self.show_question(update, context)
 
     async def category_selected(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         """Handle category selection."""
