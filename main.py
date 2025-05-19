@@ -94,7 +94,10 @@ class ToKnowBot:
                     ),
                 ],
             },
-            fallbacks=[CommandHandler("cancel", self.cancel)],
+            fallbacks=[
+                CommandHandler("cancel", self.cancel),
+                CallbackQueryHandler(self.start, pattern=f"^{self.callbacks.START}$"),
+            ],
         )
 
         self.application.add_handler(conv_handler)
@@ -103,16 +106,27 @@ class ToKnowBot:
         """Send welcome message and prompt user to continue."""
         # Initialize selected subcategories list in user data
         context.user_data["selected_subcategories"] = []
-        
+
         keyboard = [
             [InlineKeyboardButton(self.buttons.START_BUTTON, callback_data=self.callbacks.START)]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        await update.message.reply_text(
-            self.messages.WELCOME_MESSAGE,
-            reply_markup=reply_markup
-        )
+        if update.message:
+            await update.message.reply_text(
+                self.messages.WELCOME_MESSAGE,
+                reply_markup=reply_markup
+            )
+        else:
+            query = update.callback_query
+            if query:
+                await query.answer()
+                await query.delete_message()
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=self.messages.WELCOME_MESSAGE,
+                reply_markup=reply_markup,
+            )
 
         return START
 
